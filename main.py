@@ -1,8 +1,9 @@
+import base64
 import io
 import json
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query
 from fastapi.responses import Response
-import pymupdf  # PyMuPDF >= 1.24
+import pymupdf
 
 app = FastAPI(title="ocr-embedder")
 
@@ -10,10 +11,39 @@ app = FastAPI(title="ocr-embedder")
 def health():
     return {"status": "ok"}
 
+@app.post("/rasterize")
+async def rasterize(
+    pdf: UploadFile = File(...),
+    dpi: int = Query(200, ge=72, le=600),
+):
+    """Render each PDF page as a PNG. Returns JSON with base64 images in order."""
+    pdf_bytes = await pdf.read()
+    doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+
+    # PyMuPDF uses zoom matrix, not DPI directly. 72 DPI = zoom 1.0.
+    zoom = dpi / 72
+    matrix = pymupdf.Matrix(zoom, zoom)
+
+    pages = []
+    for i, page in enumerate(doc):
+        pix = page.get_pixmap(matrix=matrix, alpha=False)
+        png_bytes = pix.tobytes(output="png")
+        pages.append({
+            "page": i + 1,
+            "width": pix.width,
+            "height": pix.height,
+            "image_b64": base64.b64encode(png_bytes).decode("ascii"),
+        })
+
+    total = len(doc)
+    doc.close()
+    return {"total_pages": total, "pages": pages}
+
+
 @app.post("/embed")
 async def embed(
     pdf: UploadFile = File(...),
-    page_texts: str = Form(...),  # JSON array of strings, one per page
+    page_texts: str = Form(...),
 ):
     try:
         texts = json.loads(page_texts)

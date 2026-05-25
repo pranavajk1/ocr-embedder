@@ -69,7 +69,7 @@ async def ocr(pdf: UploadFile):
     sem = asyncio.Semaphore(ocr_helpers.CONCURRENCY)
     page_texts: dict[int, str] = {}
 
-    async with httpx.AsyncClient(http2=True) as client:
+    async with httpx.AsyncClient() as client:
         async def run_batch(idxs):
             async with sem:
                 # render only when this batch's turn comes up — bounded memory

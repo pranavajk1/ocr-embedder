@@ -1,8 +1,12 @@
 import base64
 import io
 import json
+import asyncio
+import httpx
+import pypdfium2 as pdfium
+import ocr_helpers
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 import pymupdf
 
 app = FastAPI(title="ocr-embedder")
@@ -82,3 +86,37 @@ async def embed(
     doc.save(out, garbage=4, deflate=True, clean=True)
     doc.close()
     return Response(content=out.getvalue(), media_type="application/pdf")
+
+@app.post("/ocr")
+async def ocr(pdf: UploadFile):
+    pdf_bytes = await pdf.read()
+    doc = pdfium.PdfDocument(pdf_bytes)
+    total = len(doc)
+
+    # Build batches of page indices
+    batches = [list(range(i, min(i + ocr_helpers.BATCH, total))) for i in range(0, total, ocr_helpers.BATCH)]
+    sem = asyncio.Semaphore(ocr_helpers.CONCURRENCY)
+    page_texts: dict[int, str] = {}
+
+    async with httpx.AsyncClient(http2=True) as client:
+        async def run_batch(idxs):
+            async with sem:
+                # render only when this batch's turn comes up — bounded memory
+                rendered = [(i + 1, ocr_helpers._render_page_jpeg(doc, i)) for i in idxs]
+                got = await ocr_helpers._ocr_batch(client, rendered)
+                # drop JPEGs immediately
+                del rendered
+                page_texts.update(got)
+
+        await asyncio.gather(*(run_batch(b) for b in batches))
+
+    missing = [p for p in range(1, total + 1) if p not in page_texts]
+    if missing:
+        raise HTTPException(502, f"OCR returned no text for pages: {missing}")
+
+    ordered = [page_texts[p] for p in range(1, total + 1)]
+    # reuse your existing embed logic — refactor it into a helper that takes
+    # (pdf_bytes, list[str]) and returns bytes
+    from your_embed_module import embed_text_layer
+    out_pdf = embed_text_layer(pdf_bytes, ordered)
+    return StreamingResponse(io.BytesIO(out_pdf), media_type="application/pdf")

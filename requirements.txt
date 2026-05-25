@@ -2,3 +2,6 @@ fastapi
 uvicorn[standard]
 pymupdf
 python-multipart
+httpx
+pypdfium2
+Pillow

@@ -8,6 +8,8 @@ import ocr_helpers
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query
 from fastapi.responses import Response, StreamingResponse
 import pymupdf
+import logging
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="ocr-embedder")
 
@@ -61,32 +63,53 @@ async def embed(pdf: UploadFile = File(...), page_texts: str = Form(...)):
 @app.post("/ocr")
 async def ocr(pdf: UploadFile):
     pdf_bytes = await pdf.read()
-    doc = pdfium.PdfDocument(pdf_bytes)
+
+    if not pdf_bytes:
+        raise HTTPException(
+            status_code=400,
+            detail="Uploaded PDF is empty",
+        )
+
+    try:
+        doc = pdfium.PdfDocument(pdf_bytes)
+    except Exception as e:
+        logger.exception("Failed to open uploaded PDF")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Failed to open uploaded PDF: {type(e).__name__}",
+        )
+
     total = len(doc)
 
-    # Build batches of page indices
-    batches = [list(range(i, min(i + ocr_helpers.BATCH, total))) for i in range(0, total, ocr_helpers.BATCH)]
+    if total == 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Uploaded PDF has no pages",
+        )
+
+    # Build batches of zero-based page indices.
+    batches = [
+        list(range(i, min(i + ocr_helpers.BATCH, total)))
+        for i in range(0, total, ocr_helpers.BATCH)
+    ]
+
     sem = asyncio.Semaphore(ocr_helpers.CONCURRENCY)
+
+    # page_texts is keyed by 1-based page number.
+    # Every page should get an entry, even if OCR text is empty.
     page_texts: dict[int, str] = {}
 
-    async with httpx.AsyncClient() as client:
-        async def run_batch(idxs):
+    timeout = httpx.Timeout(
+        connect=30.0,
+        read=300.0,
+        write=300.0,
+        pool=300.0,
+    )
+
+    async with httpx.AsyncClient(timeout=timeout) as client:
+
+        async def run_batch(idxs: list[int]):
             async with sem:
-                # render only when this batch's turn comes up — bounded memory
-                rendered = [(i + 1, ocr_helpers._render_page_jpeg(doc, i)) for i in idxs]
-                got = await ocr_helpers._ocr_batch(client, rendered)
-                # drop JPEGs immediately
-                del rendered
-                page_texts.update(got)
+                rendered: list[tuple[int, bytes]] = []
 
-        await asyncio.gather(*(run_batch(b) for b in batches))
-
-    missing = [p for p in range(1, total + 1) if p not in page_texts]
-    if missing:
-        raise HTTPException(502, f"OCR returned no text for pages: {missing}")
-
-    ordered = [page_texts[p] for p in range(1, total + 1)]
-    # reuse your existing embed logic — refactor it into a helper that takes
-    # (pdf_bytes, list[str]) and returns bytes
-    out_pdf = ocr_helpers.embed_text_layer(pdf_bytes, ordered)
-    return StreamingResponse(io.BytesIO(out_pdf), media_type="application/pdf")
+    

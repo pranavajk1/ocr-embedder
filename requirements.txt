@@ -5,3 +5,4 @@ python-multipart
 httpx
 pypdfium2
 Pillow
+logging

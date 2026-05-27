@@ -155,7 +155,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const meta = $('Fetch Metadata').item.json;\nconst tagsResponse = $('Fetch Tags').item.json;\nconst allTags = Array.isArray(tagsResponse) ? tagsResponse : (tagsResponse.results || []);\n\nconst tagBySlugOrName = (wanted) => allTags.find(t =>\n  String(t.slug || '').toLowerCase() === wanted.toLowerCase() ||\n  String(t.name || '').toLowerCase() === wanted.toLowerCase()\n);\n\n// Required: ocr-processing — set by Paperless auto-tag rule before the webhook fires.\n// Required: ocr-done — set on the replacement doc at upload time so Paperless's\n//           re-consume of the new doc short-circuits at the Guard.\n// Optional: ocr-inflight — set by the poller before firing the webhook to prevent\n//           duplicate fires while OCR is running. Stripped from the replacement doc.\nconst done = tagBySlugOrName('ocr-done') || tagBySlugOrName('llm-ocr-complete');\nconst processing = tagBySlugOrName('ocr-processing') || tagBySlugOrName('llm-ocr-processing');\nconst inflight = tagBySlugOrName('ocr-inflight');\nconst legacyNeeds = tagBySlugOrName('needs-llm-ocr'); // tolerated for old test docs; not required anymore.\n\nif (!done) throw new Error('Could not find Paperless tag named/sluggified ocr-done. Create it in Paperless or change this node.');\nif (!processing) throw new Error('Could not find Paperless tag named/sluggified ocr-processing. Create it in Paperless and have the Paperless workflow assign it before calling n8n.');\n\nconst removeIds = new Set([Number(processing.id)]);\nif (legacyNeeds) removeIds.add(Number(legacyNeeds.id));\nif (inflight) removeIds.add(Number(inflight.id));\n\nconst newTags = (meta.tags || [])\n  .map(t => Number(typeof t === 'object' ? t.id : t))\n  .filter(id => Number.isInteger(id) && !removeIds.has(id));\n\nif (!newTags.includes(Number(done.id))) newTags.push(Number(done.id));\n\n// Paperless document PATCH expects custom_fields as a LIST of { field, value } items.\nconst customFields = [];\nfor (const cf of (meta.custom_fields || [])) {\n  const fieldId = cf.field ?? cf.id ?? cf.custom_field;\n  if (fieldId === undefined || fieldId === null) continue;\n  customFields.push({\n    field: Number(fieldId),\n    value: cf.value ?? null,\n  });\n}\n\nconst permissions = {};\nif (meta.permissions) permissions.set_permissions = meta.permissions;\n\nreturn [{\n  json: {\n    old_doc_id: $('Extract Doc ID').item.json.doc_id,\n    title: meta.title || `Document ${$('Extract Doc ID').item.json.doc_id}`,\n    created: meta.created,\n    correspondent: meta.correspondent,\n    document_type: meta.document_type,\n    storage_path: meta.storage_path,\n    // Do NOT patch archive_serial_number before deleting the old document.\n    // ASN is unique in Paperless, so setting the same ASN on the new doc while\n    // the old doc still exists can trigger another 400. It is restored after deletion.\n    archive_serial_number: meta.archive_serial_number,\n    owner: meta.owner,\n    tags: newTags,\n    custom_fields: customFields,\n    done_tag_id: Number(done.id),\n    processing_tag_id: Number(processing.id),\n    inflight_tag_id: inflight ? Number(inflight.id) : null,\n    legacy_needs_tag_id: legacyNeeds ? Number(legacyNeeds.id) : null,\n    ...permissions,\n    missing_pages: [],   // sidecar /ocr fails 502 if any page is empty\n  },\n  binary: $input.item.binary,\n}];"
+        "jsCode": "const meta = $('Fetch Metadata').item.json;\nconst tagsResponse = $('Fetch Tags').item.json;\nconst allTags = Array.isArray(tagsResponse) ? tagsResponse : (tagsResponse.results || []);\n\nconst tagBySlugOrName = (wanted) => allTags.find(t =>\n  String(t.slug || '').toLowerCase() === wanted.toLowerCase() ||\n  String(t.name || '').toLowerCase() === wanted.toLowerCase()\n);\n\n// Required: ocr-processing — set by Paperless auto-tag rule before the webhook fires.\n// Required: ocr-done — set on the replacement doc at upload time so Paperless's\n//           re-consume of the new doc short-circuits at the Guard.\n// Optional: ocr-inflight — set by the poller before firing the webhook to prevent\n//           duplicate fires while OCR is running. Stripped from the replacement doc.\nconst done = tagBySlugOrName('ocr-done') || tagBySlugOrName('llm-ocr-complete');\nconst processing = tagBySlugOrName('ocr-processing') || tagBySlugOrName('llm-ocr-processing');\nconst inflight = tagBySlugOrName('ocr-inflight');\nconst legacyNeeds = tagBySlugOrName('needs-llm-ocr'); // tolerated for old test docs; not required anymore.\n\nif (!done) throw new Error('Could not find Paperless tag named/sluggified ocr-done. Create it in Paperless or change this node.');\nif (!processing) throw new Error('Could not find Paperless tag named/sluggified ocr-processing. Create it in Paperless and have the Paperless workflow assign it before calling n8n.');\n\nconst removeIds = new Set([Number(processing.id)]);\nif (legacyNeeds) removeIds.add(Number(legacyNeeds.id));\nif (inflight) removeIds.add(Number(inflight.id));\n\nconst newTags = (meta.tags || [])\n  .map(t => Number(typeof t === 'object' ? t.id : t))\n  .filter(id => Number.isInteger(id) && !removeIds.has(id));\n\nif (!newTags.includes(Number(done.id))) newTags.push(Number(done.id));\n\n// Paperless document PATCH expects custom_fields as a LIST of { field, value } items.\nconst customFields = [];\nfor (const cf of (meta.custom_fields || [])) {\n  const fieldId = cf.field ?? cf.id ?? cf.custom_field;\n  if (fieldId === undefined || fieldId === null) continue;\n  customFields.push({\n    field: Number(fieldId),\n    value: cf.value ?? null,\n  });\n}\n\nconst permissions = {};\nif (meta.permissions) permissions.set_permissions = meta.permissions;\n\nreturn [{\n  json: {\n    old_doc_id: $('Extract Doc ID').item.json.doc_id,\n    title: meta.title || `Document ${$('Extract Doc ID').item.json.doc_id}`,\n    created: meta.created,\n    correspondent: meta.correspondent,\n    document_type: meta.document_type,\n    storage_path: meta.storage_path,\n    // Do NOT patch archive_serial_number before deleting the old document.\n    // ASN is unique in Paperless, so setting the same ASN on the new doc while\n    // the old doc still exists can trigger another 400. It is restored after deletion.\n    archive_serial_number: meta.archive_serial_number,\n    owner: meta.owner,\n    tags: newTags,\n    custom_fields: customFields,\n    done_tag_id: Number(done.id),\n    processing_tag_id: Number(processing.id),\n    inflight_tag_id: inflight ? Number(inflight.id) : null,\n    legacy_needs_tag_id: legacyNeeds ? Number(legacyNeeds.id) : null,\n    ...permissions,\n    missing_pages: [],\n  },\n  binary: $input.item.binary,\n}];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -407,7 +407,8 @@
           "response": {
             "response": {
               "responseFormat": "file",
-              "outputPropertyName": "embedded_pdf"
+              "outputPropertyName": "embedded_pdf",
+              "fullResponse": true
             }
           },
           "timeout": 1800000
@@ -421,7 +422,95 @@
       ],
       "id": "e84ec2d0-fcb8-48ec-8033-d7973576681e",
       "name": "Call OCR Service",
-      "notes": "Service returns the input PDF unchanged with header X-OCR-Skipped: true when the PDF already had a text layer. The workflow still uploads and tags it ocr-done, which is wasteful for the (rare) born-digital case but is not a correctness issue."
+      "notes": "fullResponse:true so we can read X-OCR-Skipped from headers. When the service detects an existing text layer, it returns the input PDF byte-for-byte unchanged with X-OCR-Skipped: true; uploading that back to Paperless would fail as a duplicate, so the workflow branches on this header below."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Call OCR Service was configured with fullResponse:true, so $json contains\n// headers / statusCode / body and the binary still lives at $input.item.binary.\n// When the OCR service decides the PDF already has a text layer it returns the\n// input unchanged plus X-OCR-Skipped: true; uploading that to Paperless would\n// be rejected as a duplicate, so we have to branch.\nconst rawHeaders = $json.headers || ($json.response && $json.response.headers) || {};\nconst headers = Object.fromEntries(\n  Object.entries(rawHeaders).map(([k, v]) => [String(k).toLowerCase(), v]),\n);\nconst skippedHeader = String(headers['x-ocr-skipped'] || '').toLowerCase();\nconst ocrSkipped = skippedHeader === 'true';\n\nreturn [{\n  json: {\n    ocr_skipped: ocrSkipped,\n    ocr_status_code: $json.statusCode ?? null,\n    ocr_headers: headers,\n    old_doc_id: $('Extract Doc ID').item.json.doc_id,\n  },\n  binary: $input.item.binary,\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1936,
+        0
+      ],
+      "id": "0f4d9c8b-1c7e-4e9a-9c5e-1e4c5b6a7d01",
+      "name": "Detect OCR Skipped",
+      "notes": "Reads X-OCR-Skipped from Call OCR Service response headers and exposes it as $json.ocr_skipped for the next IF node."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "skip-branch-1",
+              "leftValue": "={{ $json.ocr_skipped }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2160,
+        0
+      ],
+      "id": "2c9e3a4b-6d5f-4a8e-9b1c-7d2e8f3a9c10",
+      "name": "Branch On OCR Skipped",
+      "notes": "TRUE branch: PDF already had a text layer, skip the upload/delete dance and just retag the old doc as ocr-done. FALSE branch: continue the normal Build Replacement Metadata flow."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Skipped path: we never produced a new PDF. Re-tag the OLD document so it\n// leaves the ocr-processing / ocr-inflight set and gains ocr-done. No upload,\n// no delete, no duplicate-hash failure.\nconst meta = $('Fetch Metadata').item.json;\nconst guard = $('Guard OCR Trigger Tags').item.json;\nconst tagsResponse = $('Fetch Tags').item.json;\nconst allTags = Array.isArray(tagsResponse) ? tagsResponse : (tagsResponse.results || []);\n\nconst findTag = (wanted) => allTags.find(t =>\n  String(t.slug || '').toLowerCase() === wanted.toLowerCase() ||\n  String(t.name || '').toLowerCase() === wanted.toLowerCase()\n);\n\nconst inflight = findTag('ocr-inflight');\nconst legacy = findTag('needs-llm-ocr');\n\nconst removeIds = new Set([Number(guard.processing_tag_id)]);\nif (inflight) removeIds.add(Number(inflight.id));\nif (legacy) removeIds.add(Number(legacy.id));\n\nconst newTags = (meta.tags || [])\n  .map(t => Number(typeof t === 'object' ? t.id : t))\n  .filter(id => Number.isInteger(id) && !removeIds.has(id));\n\nconst doneId = Number(guard.done_tag_id);\nif (!newTags.includes(doneId)) newTags.push(doneId);\n\nreturn [{\n  json: {\n    old_doc_id: $('Extract Doc ID').item.json.doc_id,\n    tags: newTags,\n    reason: 'OCR service reported X-OCR-Skipped: true (existing text layer).',\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2384,
+        -176
+      ],
+      "id": "8a1f2b3c-4d5e-6f70-8192-a3b4c5d6e7f8",
+      "name": "Build Skip Patch Body"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=http://paperless.paperless.svc.cluster.local:8000/api/documents/{{ $json.old_doc_id }}/",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { tags: $json.tags } }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        2608,
+        -176
+      ],
+      "id": "b9c8d7e6-f5a4-3b2c-1d09-8e7f6a5b4c3d",
+      "name": "Tag Old Doc Done",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "f4YSVJtJ1QJTNgF2",
+          "name": "Paperless API"
+        }
+      },
+      "notes": "Skipped-OCR terminator. Removes ocr-processing + ocr-inflight from the old doc and adds ocr-done. No new document is created."
     }
   ],
   "pinData": {},
@@ -606,7 +695,47 @@
       "main": [
         [
           {
+            "node": "Detect OCR Skipped",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Detect OCR Skipped": {
+      "main": [
+        [
+          {
+            "node": "Branch On OCR Skipped",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Branch On OCR Skipped": {
+      "main": [
+        [
+          {
+            "node": "Build Skip Patch Body",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
             "node": "Build Replacement Metadata",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Skip Patch Body": {
+      "main": [
+        [
+          {
+            "node": "Tag Old Doc Done",
             "type": "main",
             "index": 0
           }

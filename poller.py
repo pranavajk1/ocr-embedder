@@ -9,6 +9,7 @@ log = logging.getLogger("poller")
 
 PAPERLESS_URL   = os.environ["PAPERLESS_URL"]
 PAPERLESS_TOKEN = os.environ["PAPERLESS_API_TOKEN"]
+N8N_TOKEN       = os.environ["N8N_WEBHOOK_TOKEN"]
 N8N_WEBHOOK_URL = os.environ["N8N_WEBHOOK_URL"]
 TAG_PROCESSING  = os.environ.get("TAG_PROCESSING", "ocr-processing")
 TAG_DONE        = os.environ.get("TAG_DONE", "ocr-done")
@@ -51,6 +52,8 @@ async def main() -> None:
                     resp = await n8n.post(N8N_WEBHOOK_URL, json={
                         "document_id": doc_id,
                         "title": doc.get("title", ""),
+                    }, headers={
+                        "X-Webhook-Secret": N8N_TOKEN
                     })
                     resp.raise_for_status()
                 log.info("doc %d fired", doc_id)

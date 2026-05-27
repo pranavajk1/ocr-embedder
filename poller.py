@@ -34,7 +34,8 @@ async def main() -> None:
         done_id       = await resolve_tag(client, TAG_DONE)
 
         r = await client.get("/api/documents/", params={
-            "tags__id__none": f"{processing_id},{done_id}",
+            "tags__id__all": f"{processing_id}",
+            "tags__id__none": f"{done_id}",
             "page_size": PAGE_SIZE,
             "ordering": "created",
         })

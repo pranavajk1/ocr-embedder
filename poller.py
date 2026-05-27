@@ -11,7 +11,8 @@ PAPERLESS_URL   = os.environ["PAPERLESS_URL"]
 PAPERLESS_TOKEN = os.environ["PAPERLESS_API_TOKEN"]
 N8N_TOKEN       = os.environ["N8N_WEBHOOK_TOKEN"]
 N8N_WEBHOOK_URL = os.environ["N8N_WEBHOOK_URL"]
-TAG_PROCESSING  = os.environ.get("TAG_PROCESSING", "ocr-processing")
+TAG_TRIGGER     = os.environ.get("TAG_PROCESSING", "ocr-processing")
+TAG_INFLIGHT    = os.environ.get("TAG_INFLIGHT", "ocr-inflight")
 TAG_DONE        = os.environ.get("TAG_DONE", "ocr-done")
 PAGE_SIZE       = int(os.environ.get("POLL_PAGE_SIZE", "10"))
 
@@ -30,12 +31,13 @@ async def resolve_tag(client: httpx.AsyncClient, name: str) -> int:
 async def main() -> None:
     headers = {"Authorization": f"Token {PAPERLESS_TOKEN}"}
     async with httpx.AsyncClient(base_url=PAPERLESS_URL, headers=headers, timeout=30.0) as client:
-        processing_id = await resolve_tag(client, TAG_PROCESSING)
-        done_id       = await resolve_tag(client, TAG_DONE)
+        trigger_id  = await resolve_tag(client, TAG_TRIGGER)
+        inflight_id = await resolve_tag(client, TAG_INFLIGHT)
+        done_id     = await resolve_tag(client, TAG_DONE)
 
         r = await client.get("/api/documents/", params={
-            "tags__id__all": f"{processing_id}",
-            "tags__id__none": f"{done_id}",
+            "tags__id__all": f"{trigger_id}",
+            "tags__id__none": f"{done_id},{inflight_id}",
             "page_size": PAGE_SIZE,
             "ordering": "created",
         })
@@ -46,7 +48,12 @@ async def main() -> None:
         for doc in docs:
             doc_id   = doc["id"]
             cur_tags = list(doc["tags"])
-            await client.patch(f"/api/documents/{doc_id}/", json={"tags": cur_tags + [processing_id]})
+            if inflight_id in cur_tags:
+                continue
+            await client.patch(
+                f"/api/documents/{doc_id}/",
+                json={"tags": cur_tags + [inflight_id]},
+            )
 
             try:
                 async with httpx.AsyncClient(timeout=30.0) as n8n:
@@ -59,8 +66,11 @@ async def main() -> None:
                     resp.raise_for_status()
                 log.info("doc %d fired", doc_id)
             except Exception as exc:
-                log.error("doc %d failed: %s — releasing tag", doc_id, exc)
-                await client.patch(f"/api/documents/{doc_id}/", json={"tags": cur_tags})
+                log.error("doc %d failed: %s — releasing inflight tag", doc_id, exc)
+                await client.patch(
+                    f"/api/documents/{doc_id}/",
+                    json={"tags": cur_tags},
+                )
 
 
 if __name__ == "__main__":

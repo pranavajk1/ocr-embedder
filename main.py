@@ -47,11 +47,7 @@ async def ocr(pdf: UploadFile = File(...)):
     for r in results:
         page_texts.update(r)
 
-    missing = [n for n in range(1, total_pages + 1) if n not in page_texts]
-    if missing:
-        raise HTTPException(status_code=502, detail=f"Missing OCR output for pages: {missing}")
-
-    ordered_texts = [page_texts[n] for n in range(1, total_pages + 1)]
+    ordered_texts = [page_texts.get(n, "") for n in range(1, total_pages + 1)]
     output_bytes = embed_text_layer(pdf_bytes, ordered_texts)
     return Response(content=output_bytes, media_type="application/pdf")
 

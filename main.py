@@ -1,28 +1,71 @@
+import asyncio
 import base64
 import io
 import json
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query
+
+import fitz
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import Response
-import pymupdf
+
+from ocr_helpers import OCR_BATCH, _ocr_batch, embed_text_layer
 
 app = FastAPI(title="ocr-embedder")
+
 
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.post("/ocr")
+async def ocr(pdf: UploadFile = File(...)):
+    pdf_bytes = await pdf.read()
+    if not pdf_bytes:
+        raise HTTPException(status_code=400, detail="pdf field is empty")
+
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        total_pages = doc.page_count
+    finally:
+        doc.close()
+
+    batches = [
+        list(range(i, min(i + OCR_BATCH, total_pages)))
+        for i in range(0, total_pages, OCR_BATCH)
+    ]
+
+    results = await asyncio.gather(
+        *[_ocr_batch(pdf_bytes, batch) for batch in batches],
+        return_exceptions=True,
+    )
+
+    errors = [r for r in results if isinstance(r, Exception)]
+    if errors:
+        raise HTTPException(status_code=502, detail=f"OCR batch error: {errors[0]}")
+
+    page_texts: dict[int, str] = {}
+    for r in results:
+        page_texts.update(r)
+
+    missing = [n for n in range(1, total_pages + 1) if n not in page_texts]
+    if missing:
+        raise HTTPException(status_code=502, detail=f"Missing OCR output for pages: {missing}")
+
+    ordered_texts = [page_texts[n] for n in range(1, total_pages + 1)]
+    output_bytes = embed_text_layer(pdf_bytes, ordered_texts)
+    return Response(content=output_bytes, media_type="application/pdf")
+
 
 @app.post("/rasterize")
 async def rasterize(
     pdf: UploadFile = File(...),
     dpi: int = Query(200, ge=72, le=600),
 ):
-    """Render each PDF page as a PNG. Returns JSON with base64 images in order."""
     pdf_bytes = await pdf.read()
-    doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
 
-    # PyMuPDF uses zoom matrix, not DPI directly. 72 DPI = zoom 1.0.
     zoom = dpi / 72
-    matrix = pymupdf.Matrix(zoom, zoom)
+    matrix = fitz.Matrix(zoom, zoom)
 
     pages = []
     for i, page in enumerate(doc):
@@ -53,10 +96,9 @@ async def embed(
         raise HTTPException(400, "page_texts must be a JSON array")
 
     pdf_bytes = await pdf.read()
-    doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
 
     if len(texts) < len(doc):
-        # Pad with empty so we don't crash on partial coverage
         texts = texts + [""] * (len(doc) - len(texts))
     elif len(texts) > len(doc):
         texts = texts[: len(doc)]
@@ -64,10 +106,6 @@ async def embed(
     for page, text in zip(doc, texts):
         if not text or not text.strip():
             continue
-        # Invisible text layer: render_mode=3 (neither fill nor stroke).
-        # We dump the whole page's text into a single textbox covering the
-        # page area. No positional accuracy, but full-text search and ctrl-F
-        # both work in any PDF viewer, and paperless extracts it as content.
         page.insert_textbox(
             page.rect,
             text,

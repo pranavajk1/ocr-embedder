@@ -45,8 +45,8 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=v2.0,enable=${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-            type=raw,value=v2.2-rc,enable=${{ github.event_name == 'pull_request' }}
+            type=raw,value=v3.0,enable=${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+            type=raw,value=v3.0-rc,enable=${{ github.event_name == 'pull_request' }}
             type=sha,prefix=sha-
 
       - name: Set up Buildx

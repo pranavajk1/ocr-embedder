@@ -7,7 +7,7 @@ import fitz
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import Response, StreamingResponse
 
-from ocr_helpers import embed_text_layer, has_text_layer, ocr_pdf
+from ocr_helpers import embed_text_layer, ocr_pdf
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("ocr-embedder")
@@ -28,10 +28,6 @@ async def ocr(pdf: UploadFile = File(...)):
 
     filename = pdf.filename or "document.pdf"
 
-    if has_text_layer(pdf_bytes):
-        log.info("skip: %s already has a text layer", filename)
-        return _pdf_response(pdf_bytes, filename, skipped=True)
-
     try:
         texts = await ocr_pdf(pdf_bytes)
     except Exception as exc:
@@ -40,17 +36,12 @@ async def ocr(pdf: UploadFile = File(...)):
 
     output_bytes = embed_text_layer(pdf_bytes, texts)
     log.info("ocr done: %s (%d pages, %d bytes out)", filename, len(texts), len(output_bytes))
-    return _pdf_response(output_bytes, filename, skipped=False)
-
-
-def _pdf_response(pdf_bytes: bytes, filename: str, *, skipped: bool) -> StreamingResponse:
     return StreamingResponse(
-        io.BytesIO(pdf_bytes),
+        io.BytesIO(output_bytes),
         media_type="application/pdf",
         headers={
             "Content-Disposition": f'attachment; filename="{filename}"',
-            "Content-Length": str(len(pdf_bytes)),
-            "X-OCR-Skipped": "true" if skipped else "false",
+            "Content-Length": str(len(output_bytes)),
         },
     )
 

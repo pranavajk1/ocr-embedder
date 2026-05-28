@@ -17,7 +17,6 @@ OCR_MODEL = os.environ.get("OCR_MODEL", "qwen3.6-35b")
 OCR_DPI = int(os.environ.get("OCR_DPI", "150"))
 OCR_CONCURRENCY = int(os.environ.get("OCR_CONCURRENCY", "3"))
 OCR_TIMEOUT = float(os.environ.get("OCR_TIMEOUT", "600"))
-HAS_TEXT_THRESHOLD = int(os.environ.get("OCR_TEXT_THRESHOLD", "50"))
 
 LITELLM_URL = "http://litellm-svc.vllm.svc.cluster.local:4000/v1/chat/completions"
 
@@ -27,19 +26,6 @@ OCR_PROMPT = (
     "markdown. Do not summarize, do not add commentary, do not include any preface or explanation. "
     "Output only the extracted text. If the page has no readable text, output an empty response."
 )
-
-
-def has_text_layer(pdf_bytes: bytes) -> bool:
-    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    try:
-        total = 0
-        for page in doc:
-            total += len(page.get_text("text").strip())
-            if total >= HAS_TEXT_THRESHOLD:
-                return True
-        return False
-    finally:
-        doc.close()
 
 
 def _rasterize_page(pdf_bytes: bytes, page_index: int) -> str:

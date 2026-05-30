@@ -1,13 +1,16 @@
-import asyncio
 import base64
 import io
 import json
+import logging
 
 import fitz
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 
-from ocr_helpers import OCR_BATCH, _ocr_batch, embed_text_layer
+from ocr_helpers import embed_text_layer, ocr_pdf
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+log = logging.getLogger("ocr-embedder")
 
 app = FastAPI(title="ocr-embedder")
 
@@ -23,33 +26,24 @@ async def ocr(pdf: UploadFile = File(...)):
     if not pdf_bytes:
         raise HTTPException(status_code=400, detail="pdf field is empty")
 
-    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    filename = pdf.filename or "document.pdf"
+
     try:
-        total_pages = doc.page_count
-    finally:
-        doc.close()
+        texts = await ocr_pdf(pdf_bytes)
+    except Exception as exc:
+        log.exception("ocr failed for %s", filename)
+        raise HTTPException(status_code=502, detail=f"OCR failed: {exc}")
 
-    batches = [
-        list(range(i, min(i + OCR_BATCH, total_pages)))
-        for i in range(0, total_pages, OCR_BATCH)
-    ]
-
-    results = await asyncio.gather(
-        *[_ocr_batch(pdf_bytes, batch) for batch in batches],
-        return_exceptions=True,
+    output_bytes = embed_text_layer(pdf_bytes, texts)
+    log.info("ocr done: %s (%d pages, %d bytes out)", filename, len(texts), len(output_bytes))
+    return StreamingResponse(
+        io.BytesIO(output_bytes),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Length": str(len(output_bytes)),
+        },
     )
-
-    errors = [r for r in results if isinstance(r, Exception)]
-    if errors:
-        raise HTTPException(status_code=502, detail=f"OCR batch error: {errors[0]}")
-
-    page_texts: dict[int, str] = {}
-    for r in results:
-        page_texts.update(r)
-
-    ordered_texts = [page_texts.get(n, "") for n in range(1, total_pages + 1)]
-    output_bytes = embed_text_layer(pdf_bytes, ordered_texts)
-    return Response(content=output_bytes, media_type="application/pdf")
 
 
 @app.post("/rasterize")

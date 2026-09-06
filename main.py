@@ -35,13 +35,32 @@ async def ocr(pdf: UploadFile = File(...)):
         raise HTTPException(status_code=502, detail=f"OCR failed: {exc}")
 
     output_bytes = embed_text_layer(pdf_bytes, texts)
-    log.info("ocr done: %s (%d pages, %d bytes out)", filename, len(texts), len(output_bytes))
+
+    # What the model actually extracted, reported alongside the PDF.
+    #
+    # The caller cannot get this from the response body: the text layer is
+    # embedded invisibly and reading it back means re-parsing the PDF. Without
+    # it, a run where the vision model returned nothing for every page -- an
+    # unloaded model, an exhausted quota, a refusal -- is indistinguishable from
+    # a good one, because the response is still a valid PDF of the right size.
+    # The Windmill flow refuses to replace an original on these numbers; see
+    # f/paperless_ocr/steps/verify_ocr.ts in the sigma-lab-windmill repo.
+    chars = sum(len(t) for t in texts)
+    empty_pages = sum(1 for t in texts if not t.strip())
+
+    log.info(
+        "ocr done: %s (%d pages, %d empty, %d chars, %d bytes out)",
+        filename, len(texts), empty_pages, chars, len(output_bytes),
+    )
     return StreamingResponse(
         io.BytesIO(output_bytes),
         media_type="application/pdf",
         headers={
             "Content-Disposition": f'attachment; filename="{filename}"',
             "Content-Length": str(len(output_bytes)),
+            "X-OCR-Pages": str(len(texts)),
+            "X-OCR-Chars": str(chars),
+            "X-OCR-Empty-Pages": str(empty_pages),
         },
     )
 
